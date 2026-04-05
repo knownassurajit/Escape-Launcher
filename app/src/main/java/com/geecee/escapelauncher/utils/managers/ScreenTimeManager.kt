@@ -23,11 +23,13 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 object ScreenTimeManager {
-    private val appSessions = ConcurrentHashMap<String, Long>() // Thread-safe in-memory tracking
+    // We retain the open timestamp so we can split sessions cleanly at local day boundaries.
+    private val appSessions = ConcurrentHashMap<String, SessionStart>() // Thread-safe in-memory tracking
     lateinit var database: AppDatabase
 
     fun initialize(context: Context) {
@@ -40,38 +42,39 @@ object ScreenTimeManager {
 
     // Called when an app is opened
     fun onAppOpened(packageName: String) {
-        appSessions[packageName] = System.currentTimeMillis()
+        appSessions[packageName] = SessionStart(openTimestamp = System.currentTimeMillis())
     }
 
     // Called when an app is closed
     suspend fun onAppClosed(packageName: String): Int {
-        val openTime = appSessions[packageName] ?: return 0
-        val usageTime = System.currentTimeMillis() - openTime
-        val currentDate = getCurrentDate()
-
-        val appKey = "$packageName-$currentDate"  // Include date in the package name key
+        val sessionStart = appSessions[packageName] ?: return 0
+        val closeTime = System.currentTimeMillis()
+        val intervals = splitSessionIntoDateIntervals(
+            openTimeMillis = sessionStart.openTimestamp,
+            closeTimeMillis = closeTime
+        )
 
         try {
             val dao = database.appUsageDao()
-            val existingUsage = dao.getAppUsage(appKey)
-            val updatedTime = (existingUsage?.totalTime ?: 0L) + usageTime
+            // We store each interval under "<package>-yyyy-MM-dd" and accumulate with any existing usage.
+            intervals.forEach { interval ->
+                val appKey = "$packageName-${interval.dateKey}"
+                val existingUsage = dao.getAppUsage(appKey)
+                val updatedTime = (existingUsage?.totalTime ?: 0L) + interval.durationMillis
 
-            dao.insertOrUpdate(
-                AppUsageEntity(
-                    packageName = appKey,
-                    totalTime = updatedTime
+                dao.insertOrUpdate(
+                    AppUsageEntity(
+                        packageName = appKey,
+                        totalTime = updatedTime
+                    )
                 )
-            )
+            }
             appSessions.remove(packageName)
             return 1
         } catch (e: Exception) {
             Log.e("ScreenTimeManager", "Error saving app usage: ${e.message}")
             return 0
         }
-    }
-
-    private fun getCurrentDate(): String {
-        return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
     }
 
     fun clearOldData() {
@@ -87,10 +90,80 @@ object ScreenTimeManager {
     }
 }
 
+data class SessionStart(
+    val openTimestamp: Long
+)
+
+data class DateBoundedInterval(
+    val dateKey: String,
+    val durationMillis: Long
+)
+
+internal fun splitSessionIntoDateIntervals(
+    openTimeMillis: Long,
+    closeTimeMillis: Long,
+    timeZone: TimeZone = TimeZone.getDefault()
+): List<DateBoundedInterval> {
+    if (closeTimeMillis <= openTimeMillis) {
+        return emptyList()
+    }
+
+    val calendar = Calendar.getInstance(timeZone)
+    val intervals = mutableListOf<DateBoundedInterval>()
+
+    var cursor = openTimeMillis
+    while (cursor < closeTimeMillis) {
+        calendar.timeInMillis = cursor
+        val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
+            this.timeZone = timeZone
+        }.format(Date(cursor))
+
+        // Midnight after `cursor` in local time; this lets us split sessions crossing midnight.
+        val nextMidnight = Calendar.getInstance(timeZone).apply {
+            timeInMillis = cursor
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_YEAR, 1)
+        }.timeInMillis
+
+        val intervalEnd = minOf(nextMidnight, closeTimeMillis)
+        val duration = intervalEnd - cursor
+        if (duration > 0) {
+            intervals.add(DateBoundedInterval(dateKey = dateKey, durationMillis = duration))
+        }
+        cursor = intervalEnd
+    }
+
+    return intervals
+}
+
+internal fun capTodayUsageToElapsedDay(
+    usageMillis: Long,
+    nowMillis: Long = System.currentTimeMillis(),
+    toleranceMillis: Long = 60_000L,
+    timeZone: TimeZone = TimeZone.getDefault()
+): Long {
+    val midnight = Calendar.getInstance(timeZone).apply {
+        timeInMillis = nowMillis
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    val elapsedToday = (nowMillis - midnight).coerceAtLeast(0L)
+    val maxAllowed = elapsedToday + toleranceMillis
+    return usageMillis.coerceAtMost(maxAllowed)
+}
+
 // The database
 @Entity(tableName = "app_usage")
 data class AppUsageEntity(
-    @PrimaryKey val packageName: String,  // now includes the date as part of the package name
+    // Key format is "<packageName>-yyyy-MM-dd". Sessions spanning multiple days are split and
+    // persisted into one row per date so daily totals match real local-day boundaries.
+    @PrimaryKey val packageName: String,
     val totalTime: Long
 )
 
