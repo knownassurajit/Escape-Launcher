@@ -1,3 +1,4 @@
+
 <!--suppress ALL -->
 <div align="center">
 
@@ -13,6 +14,13 @@ Join our discord! [Click Here!](https://discord.gg/9u5eVTFsyS)
 
 Escape is a minimalist home screen launcher replacement for android to help you with your phone addiction. It's simple and customizable design with a list of apps on the home screen and features like an optional clock with and widgets various other things, support for material ui colour schemes (Android 12+) and features such as hidden apps. It is also one of the ONLY launchers to support Android 15's private space.
 
+</div>
+
+> [!Important]
+> I am currently working on refactoring the code in the [refactor branch](https://github.com/GeorgeClensy/Escape-Launcher/tree/refactor) so I am not currently accepting PRs, sorry.
+
+<div align="center">
+  
 <br>
 
 <table style="border-collapse: collapse; border: none;">
