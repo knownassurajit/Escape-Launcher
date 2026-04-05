@@ -47,6 +47,7 @@ import com.geecee.escapelauncher.utils.getStringSetting
 import com.geecee.escapelauncher.utils.getWidgetHeight
 import com.geecee.escapelauncher.utils.getWidgetOffset
 import com.geecee.escapelauncher.utils.getWidgetWidth
+import com.geecee.escapelauncher.utils.managers.capTodayUsageToElapsedDay
 import com.geecee.escapelauncher.utils.managers.getTotalUsageForDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -152,7 +153,9 @@ fun HomeScreen(
                         withContext(Dispatchers.IO) {
                             val usage = getTotalUsageForDate(mainAppModel.getToday())
                             withContext(Dispatchers.Main) {
-                                todayUsage.longValue = usage
+                                // Defensive clamp for UI display: today's usage cannot exceed the
+                                // elapsed local day by more than a tiny tolerance.
+                                todayUsage.longValue = capTodayUsageToElapsedDay(usage)
                             }
                         }
                     }

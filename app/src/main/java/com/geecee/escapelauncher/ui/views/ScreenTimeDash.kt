@@ -36,6 +36,7 @@ import com.geecee.escapelauncher.ui.composables.SettingsSpacer
 import com.geecee.escapelauncher.ui.theme.ContentColor
 import com.geecee.escapelauncher.utils.AppUtils
 import com.geecee.escapelauncher.utils.managers.AppUsageEntity
+import com.geecee.escapelauncher.utils.managers.capTodayUsageToElapsedDay
 import com.geecee.escapelauncher.utils.managers.getScreenTimeListSorted
 import com.geecee.escapelauncher.utils.managers.getTotalUsageForDate
 import kotlinx.coroutines.Dispatchers
@@ -81,7 +82,8 @@ fun ScreenTimeDashboard(context: Context, mainAppModel: MainAppViewModel) {
             withContext(Dispatchers.IO) {
                 val usage = getTotalUsageForDate(today)
                 withContext(Dispatchers.Main) {
-                    todayUsage.longValue = usage
+                    // Keep "today" display realistic even if persisted totals briefly overshoot.
+                    todayUsage.longValue = capTodayUsageToElapsedDay(usage)
                 }
             }
         } catch (e: Exception) {
